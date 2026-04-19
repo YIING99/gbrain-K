@@ -38,3 +38,12 @@ export/
 # Tier 3 PGLite snapshot fixture (built on demand by build:pglite-snapshot)
 test/fixtures/pglite-snapshot.tar
 test/fixtures/pglite-snapshot.version
+
+# 私人笔记防御带 —— 绝对不要 commit 到这个公开 fork
+# 真正的存放位置是 ~/gbrain-notes/，以下条目仅作兜底，防止文件误漏进工作区
+brain-export/
+notes-private/
+*深度评测*.md
+*私人*.md
+*-personal*.md
+*-private*.md
