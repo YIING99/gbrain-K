@@ -278,7 +278,9 @@ export class PGLiteEngine implements BrainEngine {
         EXISTS (SELECT 1 FROM information_schema.tables
                 WHERE table_schema='public' AND table_name='subagent_messages') AS subagent_messages_exists,
         EXISTS (SELECT 1 FROM information_schema.columns
-                WHERE table_schema='public' AND table_name='subagent_messages' AND column_name='provider_id') AS subagent_provider_id_exists
+                WHERE table_schema='public' AND table_name='subagent_messages' AND column_name='provider_id') AS subagent_provider_id_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema='public' AND table_name='pages' AND column_name='effective_date') AS effective_date_exists
     `);
     const probe = rows[0] as {
       pages_exists: boolean;
@@ -296,6 +298,7 @@ export class PGLiteEngine implements BrainEngine {
       agent_name_exists: boolean;
       subagent_messages_exists: boolean;
       subagent_provider_id_exists: boolean;
+      effective_date_exists: boolean;
     };
 
     const needsPagesBootstrap = probe.pages_exists && !probe.source_id_exists;
@@ -311,11 +314,15 @@ export class PGLiteEngine implements BrainEngine {
     // v0.27 (v36): idx_subagent_messages_provider in PGLITE_SCHEMA_SQL needs
     // provider_id (the SECOND column in the composite index `(job_id, provider_id)`).
     const needsSubagentProviderId = probe.subagent_messages_exists && !probe.subagent_provider_id_exists;
+    // v0.29 / v0.29.1: pages_coalesce_date_idx references effective_date; emotional_weight
+    // is NOT NULL with default. Both must exist before PGLITE_SCHEMA_SQL replay so the
+    // partial index does not crash on pre-v0.29 brains.
+    const needsPagesV029 = probe.pages_exists && !probe.effective_date_exists;
 
     // Fresh installs (no tables yet) and modern brains both no-op.
     if (!needsPagesBootstrap && !needsLinksBootstrap && !needsChunksBootstrap
         && !needsPagesDeletedAt && !needsChunksEmbeddingImage
-        && !needsMcpLogBootstrap && !needsSubagentProviderId) return;
+        && !needsMcpLogBootstrap && !needsSubagentProviderId && !needsPagesV029) return;
 
     console.log('  Pre-v0.21 brain detected, applying forward-reference bootstrap');
 
@@ -413,6 +420,21 @@ export class PGLiteEngine implements BrainEngine {
       // is idempotent.
       await this.db.exec(`
         ALTER TABLE subagent_messages ADD COLUMN IF NOT EXISTS provider_id TEXT;
+      `);
+    }
+
+    if (needsPagesV029) {
+      // v0.29 (emotional_weight) + v0.29.1 (effective_date / effective_date_source /
+      // import_filename / salience_touched_at). PGLITE_SCHEMA_SQL's
+      // `CREATE INDEX pages_coalesce_date_idx ON pages ((COALESCE(effective_date, updated_at)))`
+      // crashes without effective_date on pre-v0.29 brains. v0.29 + v0.29.1 migrations
+      // run later via runMigrations and are idempotent.
+      await this.db.exec(`
+        ALTER TABLE pages ADD COLUMN IF NOT EXISTS emotional_weight REAL NOT NULL DEFAULT 0.0;
+        ALTER TABLE pages ADD COLUMN IF NOT EXISTS effective_date TIMESTAMPTZ;
+        ALTER TABLE pages ADD COLUMN IF NOT EXISTS effective_date_source TEXT;
+        ALTER TABLE pages ADD COLUMN IF NOT EXISTS import_filename TEXT;
+        ALTER TABLE pages ADD COLUMN IF NOT EXISTS salience_touched_at TIMESTAMPTZ;
       `);
     }
   }
